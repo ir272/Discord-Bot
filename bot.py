@@ -3,9 +3,11 @@ from discord.ext import commands
 import logging
 from dotenv import load_dotenv
 import os
+import aiohttp
 
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
+openweather_api_key = os.getenv('OPENWEATHER_API_KEY')
 
 ian_role = "Ian"
 
@@ -15,7 +17,59 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-client = commands.Bot(command_prefix = '!', intents=intents) 
+client = commands.Bot(command_prefix = '!', intents=intents)
+
+async def get_weather(city: str, state: str, country: str):
+    url = "https://api.openweathermap.org/data/2.5/weather"
+    params = {
+        'q': f"{city},{state},{country}",
+        'appid': openweather_api_key,
+        'units': 'imperial'
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        'temperature': data['main']['temp'],
+                        'description': data['weather'][0]['description'],
+                        'error': None
+                }
+                elif response.status == 401:
+                    return {'temperature': None, 'description': None, 'error': 'Invalid API key'}
+                elif response.status == 404:
+                    return {'temperature': None, 'description': None, 'error': 'City not found'}
+                elif response.status == 429:
+                    return {'temperature': None, 'description': None, 'error': 'Rate limit exceeded'}
+                else:
+                    return {'temperature': None, 'description': None, 'error': f'API error {response.status}'}
+
+    except aiohttp.ClientError:
+        return {'temperature': None, 'description': None, 'error': 'Network connection failed'}
+    except KeyError:
+        return {'temperature': None, 'description': None, 'error': 'Unexpected API response'}
+    except Exception:
+        return {'temperature': None, 'description': None, 'error': 'An unexpected error occurred'}
+
+@client.command()
+async def weather(ctx, *, location: str):
+    if not openweather_api_key:
+        await ctx.send("OpenWeatherMap API key is not configured.")
+        return
+    
+    async with ctx.typing():
+        result = await get_weather(location, "", "")
+
+    if result['error']:
+        await ctx.send(f"Error fetching weather data: {result['error']}")
+        return
+    
+    temp = result['temperature']
+    description = result['description'].capitalize()
+    await ctx.send(f"The current weather in {location} is {temp}°F and {description}.")
+                
 
 @client.event
 async def on_ready():
